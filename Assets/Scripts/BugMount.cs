@@ -34,6 +34,9 @@ public class BugMount : MonoBehaviour
     [Header("Ground Alignment")]
     public LayerMask groundLayer = ~0;           // Ustaw na warstwê terenu/ziemi
 
+    [Header("UI Prompt")]
+    public GameObject mountPromptUI;
+
     private NavMeshAgent agent;
     private CharacterController playerCharacterController;
     private float waitTimer = 0f;
@@ -79,6 +82,19 @@ public class BugMount : MonoBehaviour
                 {
                     MountBug();
                 }
+            }
+        }
+
+        if (mountPromptUI != null)
+        {
+            if (currentlyRiddenBug == null && playerRig != null)
+            {
+                float dist = Vector3.Distance(playerRig.position, transform.position);
+                mountPromptUI.SetActive(dist <= mountDistance);
+            }
+            else
+            {
+                mountPromptUI.SetActive(false); // Hide while riding
             }
         }
 
