@@ -27,8 +27,12 @@ public class BugMount : MonoBehaviour
     public float minWaitTime = 2.0f;
     public float maxWaitTime = 5.0f;
 
-    [Header("Disable When Riding (Optional)")]
-    public Behaviour playerWalkingScript;
+    [Header("Disable When Riding")]
+    public GameObject locomotionObjectToDisable; // Przeci¹gnij tu obiekt 'Locomotor'
+    public Behaviour playerWalkingScript;        // Opcjonalne
+
+    [Header("Ground Alignment")]
+    public LayerMask groundLayer = ~0;           // Ustaw na warstwê terenu/ziemi
 
     private NavMeshAgent agent;
     private CharacterController playerCharacterController;
@@ -39,8 +43,12 @@ public class BugMount : MonoBehaviour
     {
         agent = GetComponent<NavMeshAgent>();
 
+        if (bugAnimator == null)
+        {
+            bugAnimator = GetComponentInChildren<Animator>();
+        }
 
-        // Auto-find player rig if left empty
+        // Auto-szukanie riga gracza jeœli slot jest pusty
         if (playerRig == null)
         {
             GameObject rig = GameObject.Find("[BuildingBlock] Camera Rig");
@@ -52,13 +60,12 @@ public class BugMount : MonoBehaviour
             playerCharacterController = playerRig.GetComponent<CharacterController>();
         }
 
-        // Randomize initial wander point
         waitTimer = Random.Range(0.5f, 2.0f);
     }
 
     void Update()
     {
-        // 1. Mount / Dismount Toggle
+        // 1. Wsiadanie / Zsiadanie pod przyciskiem 'A'
         if (OVRInput.GetDown(OVRInput.Button.One))
         {
             if (currentlyRiddenBug == this)
@@ -75,7 +82,7 @@ public class BugMount : MonoBehaviour
             }
         }
 
-        // 2. Drive or Wander
+        // 2. Sterowanie lub AI wêdrowania
         if (currentlyRiddenBug == this)
         {
             HandleSteering();
@@ -85,13 +92,13 @@ public class BugMount : MonoBehaviour
             HandleNavMeshWandering();
         }
 
-        // 3. Align body pitch/roll to ground slope
+        // 3. Dopasowanie k¹ta cia³a do zbocza terenu
         AlignToGroundNormal();
     }
 
     void LateUpdate()
     {
-        // Pin player to saddle
+        // Pasy bezpieczeñstwa: blokada pozycji w siodle na poziomie lokalnym
         if (currentlyRiddenBug == this && playerRig != null)
         {
             playerRig.localPosition = Vector3.zero;
@@ -102,15 +109,19 @@ public class BugMount : MonoBehaviour
     {
         currentlyRiddenBug = this;
 
+        // Wy³¹czenie poruszania siê i obracania praw¹ ga³k¹
+        if (locomotionObjectToDisable != null)
+            locomotionObjectToDisable.SetActive(false);
+
         if (playerCharacterController != null)
             playerCharacterController.enabled = false;
 
         if (playerWalkingScript != null)
             playerWalkingScript.enabled = false;
 
-        // Stop NavMesh autonomous pathfinding
+        // Zatrzymanie nawigacji autonomicznej
         agent.ResetPath();
-        agent.updateRotation = false; // We steer manually
+        agent.updateRotation = false; // Rêczne sterowanie rotacj¹
 
         playerRig.SetParent(saddle);
         playerRig.localPosition = Vector3.zero;
@@ -128,13 +139,16 @@ public class BugMount : MonoBehaviour
             playerRig.rotation = dismountPoint.rotation;
         }
 
+        // Przywrócenie chodzenia i prawej ga³ki
+        if (locomotionObjectToDisable != null)
+            locomotionObjectToDisable.SetActive(true);
+
         if (playerCharacterController != null)
             playerCharacterController.enabled = true;
 
         if (playerWalkingScript != null)
             playerWalkingScript.enabled = true;
 
-        // Re-enable autonomous NavMesh rotation
         agent.updateRotation = true;
         isWaiting = true;
         waitTimer = Random.Range(minWaitTime, maxWaitTime);
@@ -150,14 +164,14 @@ public class BugMount : MonoBehaviour
 
         if (hasInput)
         {
-            // Turn manually
+            // 1. Skrêcanie
             float turnMultiplier = invertTurn ? -1f : 1f;
             float turn = stick.x * turnSpeed * turnMultiplier * Time.deltaTime;
             transform.Rotate(0, turn, 0);
 
-            // Move through NavMeshAgent (keeps bug glued to geometry and walls)
+            // 2. Ruch w przód/ty³
             float moveMultiplier = invertForward ? -1f : 1f;
-            Vector3 forwardDir = saddle != null ? saddle.forward : transform.forward * moveMultiplier;
+            Vector3 forwardDir = (saddle != null) ? saddle.forward : transform.forward;
             Vector3 moveDirection = forwardDir * (stick.y * moveSpeed * moveMultiplier * Time.deltaTime);
 
             agent.Move(moveDirection);
@@ -174,28 +188,32 @@ public class BugMount : MonoBehaviour
         agent.speed = wanderSpeed;
         agent.updateRotation = true;
 
-        // Check if agent reached its destination
+        // SprawdŸ czy agent dotar³ do celu
         if (!agent.pathPending && agent.remainingDistance <= agent.stoppingDistance + 0.1f)
         {
             if (!isWaiting)
             {
                 isWaiting = true;
                 waitTimer = Random.Range(minWaitTime, maxWaitTime);
-                if (bugAnimator != null) bugAnimator.SetBool("isWalking", false);
             }
 
             waitTimer -= Time.deltaTime;
             if (waitTimer <= 0f)
             {
-                // Find a random valid point on the NavMesh
                 Vector3 newTarget = GetRandomNavMeshLocation(wanderRadius);
                 if (newTarget != Vector3.zero)
                 {
                     agent.SetDestination(newTarget);
                     isWaiting = false;
-                    if (bugAnimator != null) bugAnimator.SetBool("isWalking", true);
                 }
             }
+        }
+
+        // Animacja oparta o faktyczny ruch agenta
+        if (bugAnimator != null)
+        {
+            bool moving = agent.velocity.magnitude > 0.15f;
+            bugAnimator.SetBool("isWalking", moving);
         }
     }
 
@@ -212,10 +230,10 @@ public class BugMount : MonoBehaviour
         return Vector3.zero;
     }
 
-    // Tilts the bug to match the slope of the hill
     void AlignToGroundNormal()
     {
-        if (Physics.Raycast(transform.position + Vector3.up * 0.5f, Vector3.down, out RaycastHit hit, 2.0f))
+        // Ignorujemy triggery i strzelamy w dó³ z niewielkiego podwy¿szenia
+        if (Physics.Raycast(transform.position + Vector3.up * 0.6f, Vector3.down, out RaycastHit hit, 2.5f, groundLayer, QueryTriggerInteraction.Ignore))
         {
             Quaternion targetRotation = Quaternion.FromToRotation(transform.up, hit.normal) * transform.rotation;
             transform.rotation = Quaternion.Slerp(transform.rotation, targetRotation, Time.deltaTime * 6f);
